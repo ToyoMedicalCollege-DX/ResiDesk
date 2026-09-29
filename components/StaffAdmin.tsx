@@ -1,8 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ChevronDown, ChevronUp, Search } from "lucide-react";
 import { DEPARTMENTS, type Department } from "@/lib/types";
 import { STAFF_ROLE_LABEL, STAFF_ROLES, toAssignableRole, type StaffRole } from "@/lib/staff";
+
+type SortKey = "name" | "loginId" | "role";
+type SortDir = "asc" | "desc";
 
 type StaffRow = {
   id: string;
@@ -41,6 +45,61 @@ function DeptChecks({
   );
 }
 
+function roleRank(role: StaffRole): number {
+  return role === "admin" ? 1 : 0;
+}
+
+function sortStaff(list: StaffRow[], key: SortKey, dir: SortDir): StaffRow[] {
+  const sign = dir === "asc" ? 1 : -1;
+  return [...list].sort((a, b) => {
+    switch (key) {
+      case "name":
+        return sign * a.displayName.localeCompare(b.displayName, "ja");
+      case "loginId":
+        return sign * a.loginId.localeCompare(b.loginId, "ja", { numeric: true });
+      case "role": {
+        const byRole = roleRank(a.role) - roleRank(b.role);
+        if (byRole !== 0) return sign * byRole;
+        return sign * a.roleLabel.localeCompare(b.roleLabel, "ja");
+      }
+      default:
+        return 0;
+    }
+  });
+}
+
+function SortHeader({
+  label,
+  column,
+  sortKey,
+  sortDir,
+  onSort,
+}: {
+  label: string;
+  column: SortKey;
+  sortKey: SortKey;
+  sortDir: SortDir;
+  onSort: (key: SortKey) => void;
+}) {
+  const active = sortKey === column;
+  return (
+    <th className="px-3 py-2 font-medium">
+      <button
+        type="button"
+        onClick={() => onSort(column)}
+        className={`inline-flex items-center gap-0.5 hover:text-t1 ${active ? "text-t1" : ""}`}
+      >
+        {label}
+        {active ? (
+          sortDir === "asc" ? <ChevronUp size={14} /> : <ChevronDown size={14} />
+        ) : (
+          <ChevronDown size={14} className="opacity-30" aria-hidden />
+        )}
+      </button>
+    </th>
+  );
+}
+
 export default function StaffAdmin({ selfId }: { selfId: string }) {
   const [rows, setRows] = useState<StaffRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -58,6 +117,30 @@ export default function StaffAdmin({ selfId }: { selfId: string }) {
   const [editRole, setEditRole] = useState<StaffRole>("teacher");
   const [editDepts, setEditDepts] = useState<Department[]>([]);
   const [editPassword, setEditPassword] = useState("");
+  const [q, setQ] = useState("");
+  const [sortKey, setSortKey] = useState<SortKey>("name");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  const visibleRows = useMemo(() => {
+    const query = q.trim().toLowerCase();
+    const filtered = rows.filter((row) => {
+      if (!query) return true;
+      const hay = [row.displayName, row.loginId, row.roleLabel, ...row.departments]
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(query);
+    });
+    return sortStaff(filtered, sortKey, sortDir);
+  }, [rows, q, sortKey, sortDir]);
+
+  const onSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setSortKey(key);
+    setSortDir("asc");
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -220,18 +303,40 @@ export default function StaffAdmin({ selfId }: { selfId: string }) {
       {notice && <p className="mt-3 text-sm text-good">{notice}</p>}
       {loading && <p className="mt-3 text-sm text-t3">読み込み中…</p>}
 
-      <div className="mt-4 overflow-hidden rounded-xl border border-stroke">
+      <label className="relative mt-4 block">
+        <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-t3" />
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="名前・社員番号・権限で検索"
+          className="w-full rounded-xl border border-stroke bg-white py-2 pl-9 pr-3 text-sm outline-none ring-accent/30 focus:ring-2"
+        />
+      </label>
+      {!loading && (
+        <p className="mt-2 text-[11px] text-t3">
+          {q.trim() ? `${visibleRows.length} / ${rows.length} 件` : `${rows.length} 件`}
+        </p>
+      )}
+
+      <div className="mt-3 overflow-hidden rounded-xl border border-stroke">
         <table className="w-full text-left text-sm">
           <thead className="bg-bg text-xs text-t3">
             <tr>
-              <th className="px-3 py-2 font-medium">名前</th>
-              <th className="px-3 py-2 font-medium">社員番号</th>
-              <th className="px-3 py-2 font-medium">権限</th>
+              <SortHeader label="名前" column="name" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+              <SortHeader label="社員番号" column="loginId" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+              <SortHeader label="権限" column="role" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
               <th className="px-3 py-2 font-medium">操作</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => {
+            {visibleRows.length === 0 && !loading && (
+              <tr>
+                <td colSpan={4} className="px-3 py-6 text-center text-sm text-t3">
+                  {q.trim() ? "該当する教員はいません" : "登録された教員はいません"}
+                </td>
+              </tr>
+            )}
+            {visibleRows.map((row) => {
               const editing = editingId === row.id;
               return (
                 <tr key={row.id} className="border-t border-stroke align-top">
